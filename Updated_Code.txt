@@ -1,0 +1,151 @@
+#define BLYNK_TEMPLATE_ID "TMPL6x70P439O"
+#define BLYNK_TEMPLATE_NAME "smarthelmetFYP"
+#define BLYNK_AUTH_TOKEN "a_IUdYL-afbbxv2xY-WWOq333Of6wbqx"
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include "DHT.h"
+
+// ================= WIFI =================
+char ssid[] = "Smart_Helmet";
+char pass[] = "12345678";
+
+// ================= LCD =================
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// ================= PINS =================
+#define MQ5_PIN 34
+#define BUZZER_PIN 25
+#define DHTPIN 4
+#define DHTTYPE DHT11
+
+DHT dht(DHTPIN, DHTTYPE);
+BlynkTimer timer;
+
+// ================= THRESHOLDS =================
+int gasThreshold = 20000;
+float tempThreshold = 35.0;
+
+// ================= VALUES =================
+int gasValue = 0;
+int gasPercent = 0;
+float temp = 0;
+
+// ================= READ GAS =================
+int readGas() {
+  long sum = 0;
+  for (int i = 0; i < 20; i++) {
+    sum += analogRead(MQ5_PIN);
+    delay(5);
+  }
+  return sum / 20;
+}
+
+// ================= SEND DATA =================
+void sendSensorData() {
+
+  gasValue = readGas();
+  gasPercent = map(gasValue, 0, 4095, 0, 100);
+
+  temp = dht.readTemperature();
+  if (isnan(temp)) temp = 0;
+
+  // ================= LCD =================
+  lcd.setCursor(0, 0);
+  lcd.print("G:");
+  lcd.print(gasPercent);
+  lcd.print("% T:");
+  lcd.print(temp);
+
+  // ================= BLYNK SEND =================
+  Blynk.virtualWrite(V0, String(temp));           // Temperature
+  Blynk.virtualWrite(V1, String(gasPercent));     // Gas Level
+  Blynk.virtualWrite(V2, "System Running");      // Status
+
+  // ================= ALERT =================
+  bool gasAlert = gasValue > gasThreshold;
+  bool tempAlert = temp > tempThreshold;
+
+  if (gasAlert || tempAlert) {
+
+    String status;
+
+    if (gasAlert && tempAlert) {
+      status = "GAS + TEMP ALERT";
+    } else if (gasAlert) {
+      status = "GAS DETECTED";
+    } else {
+      status = "TEMP HIGH";
+    }
+
+    Blynk.virtualWrite(V2, status);
+
+    // buzzer alert
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(200);
+    digitalWrite(BUZZER_PIN, LOW);
+  } else {
+    Blynk.virtualWrite(V2, "AIR SAFE");
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+
+  Serial.print("Temp: ");
+  Serial.print(temp);
+  Serial.print(" Gas%: ");
+  Serial.println(gasPercent);
+}
+
+// ================= SENSOR TEST =================
+void sensorTest() {
+
+  lcd.clear();
+  lcd.print("System Test");
+  delay(1500);
+
+  float t = dht.readTemperature();
+  int mq = analogRead(MQ5_PIN);
+
+  if (!isnan(t)) {
+    Blynk.virtualWrite(V0, String(t));
+  }
+
+  if (mq > 0) {
+    Blynk.virtualWrite(V1, "OK");
+  }
+
+  Blynk.virtualWrite(V2, "TEST COMPLETE");
+}
+
+// ================= SETUP =================
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  dht.begin();
+
+  Wire.begin(21, 22);
+  lcd.init();
+  lcd.backlight();
+
+  lcd.print("Connecting WiFi");
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+
+  lcd.clear();
+  lcd.print("Smart Helmet");
+
+  sensorTest();
+
+  timer.setInterval(5000L, sendSensorData); // every 5 sec
+}
+
+// ================= LOOP =================
+void loop() {
+  Blynk.run();
+  timer.run();
+}
